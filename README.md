@@ -1,114 +1,73 @@
-# ORB_SLAM3_ROS2
-This repository is ROS2 wrapping to use ORB_SLAM3
+ORB_SLAM3_ROS2_FIXED
+A fixed and improved ROS2 wrapper for ORB-SLAM3, based on the original repository by zang09.
+This version resolves several common build/runtime issues and enhances compatibility with modern ROS2 and OpenCV environments.
 
----
+✅ What's Fixed
+🚫 问题 1：OpenCV 共享对象文件冲突
+错误表现：
+编译或运行时出现 OpenCV 版本不一致导致的符号冲突。
 
-## Demo Video
-[![orbslam3_ros2](https://user-images.githubusercontent.com/31432135/220839530-786b8a28-d5af-4aa5-b4ed-6234c2f4ca33.PNG)](https://www.youtube.com/watch?v=zXeXL8q72lM)
+解决方法：
+在 CMakeLists.txt 中明确指定 OpenCV 版本路径：
 
-## Prerequisites
-- I have tested on below version.
-  - Ubuntu 20.04
-  - ROS2 foxy
-  - OpenCV 4.2.0
+cmake
+复制
+编辑
+# === 指定 OpenCV 4.4.0 ===
+set(OpenCV_DIR "/usr/local/lib/cmake/opencv4")  # 按你的 OpenCV 安装路径修改
+find_package(OpenCV REQUIRED)
+🧱 问题 2：缺失 OpenCV 模块
+错误表现：
+链接报错，提示找不到如 opencv_calib3d 等模块。
 
-- Build ORB_SLAM3
-  - Go to this [repo](https://github.com/zang09/ORB-SLAM3-STEREO-FIXED) and follow build instruction.
+解决方法：
+在 CMakeLists.txt 中手动添加所需模块：
 
-- Install related ROS2 package
-```
-$ sudo apt install ros-$ROS_DISTRO-vision-opencv && sudo apt install ros-$ROS_DISTRO-message-filters
-```
+cmake
+复制
+编辑
+# 手动追加需要的 OpenCV 模块
+list(APPEND OpenCV_LIBS opencv_calib3d opencv_core opencv_imgproc opencv_highgui)
+💥 问题 3：运行时崩溃 double free or corruption (out)
+错误表现：
+运行时出现如下错误并中止：
 
-## How to build
-1. Clone repository to your ROS workspace
-```
-$ mkdir -p colcon_ws/src
-$ cd ~/colcon_ws/src
-$ git clone https://github.com/zang09/ORB_SLAM3_ROS2.git orbslam3_ros2
-```
+markdown
+复制
+编辑
+double free or corruption (out)
+[ros2run]: Aborted
+原因分析：
+源码中误用了 shared_ptr<rclcpp::Node>(this)，导致 this 被多个 shared_ptr 管理，造成重复释放。
 
-2. Change this [line](https://github.com/zang09/ORB_SLAM3_ROS2/blob/ee82428ed627922058b93fea1d647725c813584e/CMakeLists.txt#L5) to your own `python site-packages` path
+修复方法：
+在 rgbd-slam-node.cpp 的构造函数中修改如下：
 
-3. Change this [line](https://github.com/zang09/ORB_SLAM3_ROS2/blob/ee82428ed627922058b93fea1d647725c813584e/CMakeModules/FindORB_SLAM3.cmake#L8) to your own `ORB_SLAM3` path
+cpp
+复制
+编辑
+// 修改前
+rgb_sub = std::make_shared<message_filters::Subscriber<ImageMsg>>(
+    std::shared_ptr<rclcpp::Node>(this),
+    "/camera/camera/color/image_raw");
+depth_sub = std::make_shared<message_filters::Subscriber<ImageMsg>>(
+    std::shared_ptr<rclcpp::Node>(this),
+    "/camera/camera/aligned_depth_to_color/image_raw");
 
-Now, you are ready to build!
-```
-$ cd ~/colcon_ws
-$ colcon build --symlink-install --packages-select orbslam3
-```
+// 修改后
+rgb_sub = std::make_shared<message_filters::Subscriber<ImageMsg>>(
+    this, "camera/camera/color/image_raw");
+depth_sub = std::make_shared<message_filters::Subscriber<ImageMsg>>(
+    this, "camera/camera/aligned_depth_to_color/image_raw");
+✅ 修改原因说明：
+原写法中创建了新的 shared_ptr 管理已有对象，导致多次释放。
+修改后传递裸指针 this 是 ROS2 推荐的做法，避免了内存重复释放的问题。
 
-## Troubleshootings
-1. If you cannot find `sophus/se3.hpp`:  
-Go to your `ORB_SLAM3_ROOT_DIR` and install sophus library.
-```
-$ cd ~/{ORB_SLAM3_ROOT_DIR}/Thirdparty/Sophus/build
-$ sudo make install
-```
+📦 原始项目来源
+本仓库基于原项目 zang09/ORB_SLAM3_ROS2 修改而来：
 
-2. Please compile with `OpenCV 4.2.0` version.
-Refer this [#issue](https://github.com/zang09/ORB_SLAM3_ROS2/issues/2#issuecomment-1251850857)
+增加对 stereo-inertial 模式的支持
 
-## How to use
-1. Source the workspace  
-```
-$ source ~/colcon_ws/install/local_setup.bash
-```
+修复 OpenCV 和 ROS2 的兼容问题
 
-2. Run orbslam mode, which you want.  
-This repository only support `MONO, STEREO, RGBD, STEREO-INERTIAL` mode now.  
-You can find vocabulary file and config file in here. (e.g. `orbslam3_ros2/vocabulary/ORBvoc.txt`, `orbslam3_ros2/config/monocular/TUM1.yaml` for monocular SLAM).
-  - `MONO` mode  
-```
-$ ros2 run orbslam3 mono PATH_TO_VOCABULARY PATH_TO_YAML_CONFIG_FILE
-```
-  - `STEREO` mode  
-```
-$ ros2 run orbslam3 stereo PATH_TO_VOCABULARY PATH_TO_YAML_CONFIG_FILE BOOL_RECTIFY
-```
-  - `RGBD` mode  
-```
-$ ros2 run orbslam3 rgbd PATH_TO_VOCABULARY PATH_TO_YAML_CONFIG_FILE
-```
-  - `STEREO-INERTIAL` mode  
-```
-$ ros2 run orbslam3 stereo-inertial PATH_TO_VOCABULARY PATH_TO_YAML_CONFIG_FILE BOOL_RECTIFY [BOOL_EQUALIZE]
-```
-
-## Run with rosbag
-To play ros1 bag file, you should install `ros1 noetic` & `ros1 bridge`.  
-Here is a [link](https://www.theconstructsim.com/ros2-qa-217-how-to-mix-ros1-and-ros2-packages/) to demonstrate example of `ros1-ros2 bridge` procedure.  
-If you have `ros1 noetic` and `ros1 bridge` already, open your terminal and follow this:  
-(Shell A, B, C, D is all different terminal, e.g. `stereo-inertial` mode)
-1. Download EuRoC Dataset (`V1_02_medium.bag`)
-```
-$ wget -P ~/Downloads http://robotics.ethz.ch/~asl-datasets/ijrr_euroc_mav_dataset/vicon_room1/V1_02_medium/V1_02_medium.bag
-```  
-
-2. Launch Terminal  
-(e.g. `ROS1_INSTALL_PATH`=`/opt/ros/noetic`, `ROS2_INSTALL_PATH`=`/opt/ros/foxy`)
-```
-#Shell A:
-source ${ROS1_INSTALL_PATH}/setup.bash
-roscore
-
-#Shell B:
-source ${ROS1_INSTALL_PATH}/setup.bash
-source ${ROS2_INSTALL_PATH}/setup.bash
-export ROS_MASTER_URI=http://localhost:11311
-ros2 run ros1_bridge dynamic_bridge
-
-#Shell C:
-source ${ROS1_INSTALL_PATH}/setup.bash
-rosbag play ~/Downloads/V1_02_medium.bag --pause /cam0/image_raw:=/camera/left /cam1/image_raw:=/camera/right /imu0:=/imu
-
-#Shell D:
-source ${ROS2_INSTALL_PATH}/setup.bash
-ros2 run orbslam3 stereo-inertial PATH_TO_VOCABULARY PATH_TO_YAML_CONFIG_FILE BOOL_RECTIFY [BOOL_EQUALIZE]
-```
-
-3. Press `spacebar` in `Shell C` to resume bag file.  
-
-## Acknowledgments
-This repository is modified from [this](https://github.com/curryc/ros2_orbslam3) repository.  
-To add `stereo-inertial` mode and improve build difficulites.
+优化构建流程和错误信息提示
